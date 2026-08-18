@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component>
+    <name>org.freedesktop.IBus.Inkey</name>
+    <description>Inkey Phase 0 skeleton component</description>
+    <exec>@EXEC_PATH@</exec>
+    <version>0.1.0</version>
+    <author>Denys Ziuziuk</author>
+    <license>MIT</license>
+    <homepage>https://github.com/Ziuziuk-Denys/inkey</homepage>
+    <textdomain>ibus-engine-inkey</textdomain>
+    <engines>
+        <engine>
+            <name>inkey</name>
+            <language>en</language>
+            <license>MIT</license>
+            <author>Denys Ziuziuk</author>
+            <icon>ibus-engine</icon>
+            <layout>us</layout>
+            <longname>Inkey (Phase 0)</longname>
+            <description>Phase 0 passthrough skeleton engine, proves the IBus to Rust FFI pipeline</description>
+            <rank>0</rank>
+        </engine>
+    </engines>
+</component>
