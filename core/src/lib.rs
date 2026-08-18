@@ -1,7 +1,6 @@
-// Phase 0 FFI boundary: proves the engine (C) can call into core (Rust)
-// and get a real transformed answer back. The transform itself
-// (uppercasing) is a placeholder to make the call observable end to end -
-// correction/prediction/punctuation logic replaces it in later phases.
+// FFI boundary between the C IBus engine and the Rust core. The engine
+// buffers one word at a time and calls inkey_transform once per word
+// boundary (see engine/src/engine.c) - not per keystroke, as Phase 0 did.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -11,11 +10,13 @@ mod detect;
 mod frequency;
 mod layout_tables;
 
-// Uppercases the input UTF-8 string and returns a newly allocated C string.
-// The caller owns the returned pointer and must free it with
-// inkey_free_string. A panic inside the transform, or invalid input, falls
-// back to returning a copy of the original text instead of crashing the
-// caller (ibus-daemon must never go down because of this call).
+// Applies word-boundary EN<->RU/UK correction to the input UTF-8 word and
+// returns a newly allocated C string (the corrected word, or a copy of the
+// input if no correction applies). The caller owns the returned pointer
+// and must free it with inkey_free_string. A panic inside the transform,
+// or invalid input, falls back to returning a copy of the original text
+// instead of crashing the caller (ibus-daemon must never go down because
+// of this call).
 #[no_mangle]
 pub extern "C" fn inkey_transform(input: *const c_char) -> *mut c_char {
     if input.is_null() {
@@ -27,7 +28,7 @@ pub extern "C" fn inkey_transform(input: *const c_char) -> *mut c_char {
         Err(_) => return duplicate_c_string(input),
     };
 
-    let result = panic::catch_unwind(|| input_str.to_uppercase());
+    let result = panic::catch_unwind(|| detect::correct_word(&input_str));
 
     match result {
         Ok(transformed) => match CString::new(transformed) {
@@ -58,11 +59,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uppercases_ascii() {
+    fn corrects_wrong_layout_word_through_the_ffi_boundary() {
+        let input = CString::new("ghbdtn").unwrap();
+        let output = inkey_transform(input.as_ptr());
+        let output_str = unsafe { CStr::from_ptr(output) }.to_str().unwrap();
+        assert_eq!(output_str, "привет");
+        inkey_free_string(output);
+    }
+
+    #[test]
+    fn leaves_correctly_typed_word_untouched_through_the_ffi_boundary() {
         let input = CString::new("hello").unwrap();
         let output = inkey_transform(input.as_ptr());
         let output_str = unsafe { CStr::from_ptr(output) }.to_str().unwrap();
-        assert_eq!(output_str, "HELLO");
+        assert_eq!(output_str, "hello");
         inkey_free_string(output);
     }
 

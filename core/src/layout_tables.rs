@@ -1,5 +1,8 @@
-// Positional keyboard remap tables for EN <-> RU and EN <-> UK wrong-layout
-// correction.
+// Positional keyboard remap tables for Latin-as-typed -> RU/UK wrong-layout
+// correction. Only this direction is exposed: Inkey pins the physical XKB
+// layout to "us" while active (see core/src/detect.rs), so every raw
+// keystroke it ever sees is Latin - there's no Cyrillic-typed-as-Latin
+// case to remap back from.
 //
 // These tables are derived directly from this system's XKB symbol
 // definitions, not hand-typed from memory:
@@ -71,16 +74,6 @@ fn latin_to_cyrillic_lower(layout: CyrillicLayout, latin_lower: char) -> Option<
         .map(|(_, c)| *c)
 }
 
-// Looks up the lowercase Latin letter at the same physical key as the
-// given lowercase Cyrillic letter, or None if no key on this layout
-// produces that letter.
-fn cyrillic_to_latin_lower(layout: CyrillicLayout, cyrillic_lower: char) -> Option<char> {
-    pairs_for(layout)
-        .iter()
-        .find(|(_, c)| *c == cyrillic_lower)
-        .map(|(l, _)| *l)
-}
-
 // Case-preserving single character remap: Latin -> Cyrillic.
 pub fn latin_to_cyrillic(layout: CyrillicLayout, ch: char) -> Option<char> {
     let is_upper = ch.is_uppercase();
@@ -93,29 +86,11 @@ pub fn latin_to_cyrillic(layout: CyrillicLayout, ch: char) -> Option<char> {
     }
 }
 
-// Case-preserving single character remap: Cyrillic -> Latin.
-pub fn cyrillic_to_latin(layout: CyrillicLayout, ch: char) -> Option<char> {
-    let is_upper = ch.is_uppercase();
-    let lower: char = ch.to_lowercase().next()?;
-    let mapped = cyrillic_to_latin_lower(layout, lower)?;
-    if is_upper {
-        mapped.to_uppercase().next()
-    } else {
-        Some(mapped)
-    }
-}
-
 // Remaps every character of `word` from Latin to Cyrillic positionally.
 // Returns None if any character has no mapping on this layout (the word
 // can't be fully reinterpreted, so no correction should be offered).
 pub fn remap_word_latin_to_cyrillic(word: &str, layout: CyrillicLayout) -> Option<String> {
     word.chars().map(|c| latin_to_cyrillic(layout, c)).collect()
-}
-
-// Remaps every character of `word` from Cyrillic to Latin positionally.
-// Returns None if any character has no mapping on this layout.
-pub fn remap_word_cyrillic_to_latin(word: &str, layout: CyrillicLayout) -> Option<String> {
-    word.chars().map(|c| cyrillic_to_latin(layout, c)).collect()
 }
 
 #[cfg(test)]
@@ -143,14 +118,6 @@ mod tests {
         assert_eq!(
             remap_word_latin_to_cyrillic("Ghbdtn", CyrillicLayout::Ru).as_deref(),
             Some("Привет")
-        );
-    }
-
-    #[test]
-    fn ru_reverse_direction_is_the_inverse() {
-        assert_eq!(
-            remap_word_cyrillic_to_latin("привет", CyrillicLayout::Ru).as_deref(),
-            Some("ghbdtn")
         );
     }
 
