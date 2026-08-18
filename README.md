@@ -1,19 +1,32 @@
 # inkey
 
-Offline text-augmentation IBus engine. This is a Phase 0 skeleton: it proves
-the pipeline end to end (IBus captures a keystroke, hands it to a Rust core
-over a C FFI boundary, commits the transformed result back into the focused
-app). The transform itself is a placeholder (uppercasing) - correction,
-prediction, and punctuation logic land in later phases.
+Offline text-augmentation IBus engine. Phase 1: word-boundary EN <-> RU/UK
+wrong-layout correction. Ctrl/Alt/Super-held key combos always pass through
+untouched. Plain characters are buffered per word and only inspected at a
+word boundary (space, `.,!?;:`, or Enter) - if the buffered word looks like
+Cyrillic typed on the wrong physical layout (scored against word-frequency
+data), the already-committed original is erased and the corrected word is
+committed instead; otherwise nothing changes. No preedit, no prediction, no
+punctuation restoration yet - those are separate, later phases.
+
+Inkey pins the physical XKB layout to `us` for as long as it's the active
+input source (see `layout` in `engine/data/inkey.xml.in`), so it never
+needs to touch `gsettings`/system layout state itself - see
+`core/src/detect.rs` for the reasoning.
 
 ## Layout
 
 - `core/` - Rust crate (`cdylib` + `staticlib`), exposes `inkey_transform`
-  and `inkey_free_string` over a C ABI. A panic inside the transform never
-  crashes the caller; it falls back to returning the original text.
+  and `inkey_free_string` over a C ABI. `inkey_transform` runs word-boundary
+  correction (`core/src/detect.rs`) using positional remap tables derived
+  from system XKB data (`core/src/layout_tables.rs`) and embedded
+  word-frequency data (`core/src/frequency.rs`). A panic inside the
+  transform never crashes the caller; it falls back to returning the
+  original text.
 - `engine/` - C `IBusEngine` implementation, built with meson, linking
   against `core/`. Registers as component `org.freedesktop.IBus.Inkey`,
-  engine name `inkey`.
+  engine name `inkey`. Buffers characters per word in `engine.c` and calls
+  `inkey_transform` once per word boundary, not per keystroke.
 
 ## Build
 
@@ -59,11 +72,21 @@ session before a newly registered engine appears in Settings), then check
 
 ## Test
 
-1. GNOME Settings -> Keyboard -> Input Sources -> Add an Input Source ->
-   find "Inkey (Phase 0)".
-2. Switch to it with the input source switcher.
-3. Type into GNOME Text Editor or Firefox's address bar - typed characters
-   should commit uppercased.
+Automated:
+
+```sh
+cd core && cargo test && cd ..
+cd engine && meson test -C build --print-errorlogs && cd ..
+```
+
+Manual (needs a real GNOME session):
+
+1. Switch to Inkey (via GNOME Settings -> Keyboard -> Input Sources, or
+   `ibus engine inkey`).
+2. In GNOME Text Editor, confirm Ctrl+C/Ctrl+V still work normally.
+3. Type `ghbdtn ` (with a trailing space) - it should become `привет `.
+4. Type a correctly-typed English word like `hello ` - it should stay
+   `hello `, unmangled.
 
 Rebuilding after editing `core/` or `engine/` regenerates
 `engine/build/inkey.xml` (meson bakes in the absolute exec path), so the
