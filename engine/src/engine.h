@@ -20,6 +20,13 @@ struct _IBusInkeyEngineClass {
 
 GType ibus_inkey_engine_get_type(void);
 
+/*
+ * Returns TRUE when the given modifier state means the key event must be
+ * left untouched (Ctrl, Alt, or Super held) so shortcuts like Ctrl+C keep
+ * working while Inkey is the active input source. Exposed for unit testing.
+ */
+gboolean ibus_inkey_should_pass_through(guint modifiers);
+
 G_END_DECLS
 
 #endif /* INKEY_ENGINE_H */

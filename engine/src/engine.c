@@ -3,6 +3,18 @@
 
 G_DEFINE_TYPE(IBusInkeyEngine, ibus_inkey_engine, IBUS_TYPE_ENGINE)
 
+/* Ctrl, Alt, and Super. Super is reported as Mod4 on X11/XWayland and as
+ * the dedicated Super mask on newer ibus/Wayland setups, so both are
+ * checked. */
+#define INKEY_MODIFIER_PASSTHROUGH_MASK \
+    (IBUS_CONTROL_MASK | IBUS_MOD1_MASK | IBUS_MOD4_MASK | IBUS_SUPER_MASK)
+
+gboolean
+ibus_inkey_should_pass_through(guint modifiers)
+{
+    return (modifiers & INKEY_MODIFIER_PASSTHROUGH_MASK) != 0;
+}
+
 static gboolean
 ibus_inkey_engine_process_key_event(IBusEngine *engine,
                                      guint       keyval,
@@ -13,6 +25,10 @@ ibus_inkey_engine_process_key_event(IBusEngine *engine,
 
     /* Let key releases pass through untouched. */
     if (modifiers & IBUS_RELEASE_MASK)
+        return FALSE;
+
+    /* Ctrl/Alt/Super-held key combos are shortcuts, not text input. */
+    if (ibus_inkey_should_pass_through(modifiers))
         return FALSE;
 
     gunichar ch = ibus_keyval_to_unicode(keyval);

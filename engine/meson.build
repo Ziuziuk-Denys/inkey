@@ -28,3 +28,11 @@ configure_file(
   output : 'inkey.xml',
   configuration : conf_data,
 )
+
+test_modifier_passthrough_exe = executable('test-modifier-passthrough',
+  'tests/test_modifier_passthrough.c',
+  'src/engine.c',
+  dependencies : [ibus_dep, glib_dep, gobject_dep, core_dep],
+  install : false,
+)
+test('modifier passthrough', test_modifier_passthrough_exe)
