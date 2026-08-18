@@ -7,6 +7,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic;
 
+mod frequency;
 mod layout_tables;
 
 // Uppercases the input UTF-8 string and returns a newly allocated C string.
