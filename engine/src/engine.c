@@ -33,42 +33,101 @@ ibus_inkey_is_word_boundary_char(gunichar ch)
     }
 }
 
-/* Replaces the already-committed original word in the client app with
- * `corrected`: one synthetic Backspace per original character, then a
- * commit of the corrected text. Only called when a correction actually
- * changes the word, since this is disruptive (visible delete-and-retype)
- * compared to the normal passthrough echo. */
-static void
-inkey_replace_committed_word(IBusEngine *engine, const gchar *original, const gchar *corrected)
+void
+ibus_inkey_flush_word_buffer(GString *word_buffer, const InkeySink *sink)
 {
-    glong char_count = g_utf8_strlen(original, -1);
-    for (glong i = 0; i < char_count; i++) {
-        ibus_engine_forward_key_event(engine, IBUS_KEY_BackSpace, 0, 0);
-        ibus_engine_forward_key_event(engine, IBUS_KEY_BackSpace, 0, IBUS_RELEASE_MASK);
-    }
-
-    IBusText *text = ibus_text_new_from_string(corrected);
-    ibus_engine_commit_text(engine, text);
-}
-
-/* Runs word-boundary correction on the buffered word (if any) and clears
- * the buffer. Called right before a boundary character (space, .,!?;:, or
- * Enter) is allowed to pass through, and on focus/reset so a buffer never
- * bleeds into a different field or app. */
-static void
-inkey_flush_word_buffer(IBusEngine *engine, IBusInkeyEngine *self)
-{
-    if (self->word_buffer->len == 0)
+    if (word_buffer->len == 0)
         return;
 
-    char *corrected = inkey_transform(self->word_buffer->str);
-    if (corrected != NULL) {
-        if (g_strcmp0(corrected, self->word_buffer->str) != 0)
-            inkey_replace_committed_word(engine, self->word_buffer->str, corrected);
+    char *corrected = inkey_transform(word_buffer->str);
+    const char *final_text = (corrected != NULL) ? corrected : word_buffer->str;
+
+    /* Nothing has actually been committed yet - the word has only ever
+     * been shown as preedit - so there's nothing to erase. Clear the
+     * preedit display, then commit the winning text exactly once. */
+    sink->hide_preedit(sink->user_data);
+    sink->commit(sink->user_data, final_text);
+
+    if (corrected != NULL)
         inkey_free_string(corrected);
+
+    g_string_set_size(word_buffer, 0);
+}
+
+gboolean
+ibus_inkey_handle_printable_char(GString *word_buffer, const InkeySink *sink, gunichar ch)
+{
+    if (ibus_inkey_is_word_boundary_char(ch)) {
+        ibus_inkey_flush_word_buffer(word_buffer, sink);
+        return FALSE; /* let the boundary character itself pass through */
     }
 
-    g_string_set_size(self->word_buffer, 0);
+    gchar utf8[7] = {0};
+    gint len = g_unichar_to_utf8(ch, utf8);
+    utf8[len] = '\0';
+    g_string_append(word_buffer, utf8);
+
+    sink->update_preedit(sink->user_data, word_buffer->str);
+
+    /* Consumed: the character is shown via preedit, not committed to the
+     * document, until the word is flushed. */
+    return TRUE;
+}
+
+gboolean
+ibus_inkey_handle_backspace(GString *word_buffer, const InkeySink *sink)
+{
+    if (word_buffer->len == 0)
+        return FALSE; /* nothing buffered - let a real Backspace do its job */
+
+    g_string_truncate(word_buffer, word_buffer->len - 1);
+    if (word_buffer->len > 0)
+        sink->update_preedit(sink->user_data, word_buffer->str);
+    else
+        sink->hide_preedit(sink->user_data);
+
+    /* Consumed: there's nothing of ours in the real document to delete -
+     * the buffered word only ever existed in preedit. */
+    return TRUE;
+}
+
+static void
+real_sink_commit(gpointer user_data, const gchar *text)
+{
+    IBusEngine *engine = IBUS_ENGINE(user_data);
+    IBusText *ibus_text = ibus_text_new_from_string(text);
+    ibus_engine_commit_text(engine, ibus_text);
+}
+
+static void
+real_sink_update_preedit(gpointer user_data, const gchar *text)
+{
+    IBusEngine *engine = IBUS_ENGINE(user_data);
+    IBusText *ibus_text = ibus_text_new_from_string(text);
+    guint cursor_pos = (guint) g_utf8_strlen(text, -1);
+    /* IBUS_ENGINE_PREEDIT_COMMIT: if focus is lost mid-word, the client
+     * commits whatever's currently buffered rather than silently
+     * discarding it. */
+    ibus_engine_update_preedit_text_with_mode(
+        engine, ibus_text, cursor_pos, TRUE, IBUS_ENGINE_PREEDIT_COMMIT);
+}
+
+static void
+real_sink_hide_preedit(gpointer user_data)
+{
+    ibus_engine_hide_preedit_text(IBUS_ENGINE(user_data));
+}
+
+static InkeySink
+ibus_inkey_real_sink(IBusEngine *engine)
+{
+    InkeySink sink = {
+        .commit = real_sink_commit,
+        .update_preedit = real_sink_update_preedit,
+        .hide_preedit = real_sink_hide_preedit,
+        .user_data = engine,
+    };
+    return sink;
 }
 
 static gboolean
@@ -89,50 +148,38 @@ ibus_inkey_engine_process_key_event(IBusEngine *engine,
     if (ibus_inkey_should_pass_through(modifiers))
         return FALSE;
 
+    InkeySink sink = ibus_inkey_real_sink(engine);
+
     /* Enter has no unicode value from ibus_keyval_to_unicode, but it's
      * still a word boundary: flush, then let the app insert the newline
      * itself. */
     if (keyval == IBUS_KEY_Return || keyval == IBUS_KEY_KP_Enter) {
-        inkey_flush_word_buffer(engine, self);
+        ibus_inkey_flush_word_buffer(self->word_buffer, &sink);
         return FALSE;
     }
 
-    /* Keep the buffer in sync with ordinary edits so a stale prefix from
-     * before a backspace doesn't get "corrected" later. Left/Right/Delete
-     * and mouse-driven cursor moves are not tracked in this phase - a
-     * known, accepted limitation of trigger-character word buffering. */
-    if (keyval == IBUS_KEY_BackSpace) {
-        if (self->word_buffer->len > 0)
-            g_string_truncate(self->word_buffer, self->word_buffer->len - 1);
-        return FALSE;
-    }
+    if (keyval == IBUS_KEY_BackSpace)
+        return ibus_inkey_handle_backspace(self->word_buffer, &sink);
 
     gunichar ch = ibus_keyval_to_unicode(keyval);
 
-    /* Not a printable character (arrows, function keys, etc). */
-    if (ch == 0 || !g_unichar_isprint(ch))
-        return FALSE;
-
-    if (ibus_inkey_is_word_boundary_char(ch)) {
-        inkey_flush_word_buffer(engine, self);
+    /* Not part of a word (arrows, Tab, Escape, function keys, etc). Flush
+     * any pending preedit first so it doesn't stay visibly stuck while
+     * the user moves elsewhere; a no-op if nothing is buffered. */
+    if (ch == 0 || !g_unichar_isprint(ch)) {
+        ibus_inkey_flush_word_buffer(self->word_buffer, &sink);
         return FALSE;
     }
 
-    gchar utf8[7] = {0};
-    gint len = g_unichar_to_utf8(ch, utf8);
-    utf8[len] = '\0';
-    g_string_append(self->word_buffer, utf8);
-
-    /* Let the app echo the character itself; we only ever intervene
-     * (erase + recommit) once a completed word turns out to need
-     * correcting. */
-    return FALSE;
+    return ibus_inkey_handle_printable_char(self->word_buffer, &sink, ch);
 }
 
 static void
 ibus_inkey_engine_focus_out(IBusEngine *engine)
 {
-    inkey_flush_word_buffer(engine, IBUS_INKEY_ENGINE(engine));
+    IBusInkeyEngine *self = IBUS_INKEY_ENGINE(engine);
+    InkeySink sink = ibus_inkey_real_sink(engine);
+    ibus_inkey_flush_word_buffer(self->word_buffer, &sink);
     IBUS_ENGINE_CLASS(ibus_inkey_engine_parent_class)->focus_out(engine);
 }
 
@@ -140,7 +187,8 @@ static void
 ibus_inkey_engine_reset(IBusEngine *engine)
 {
     IBusInkeyEngine *self = IBUS_INKEY_ENGINE(engine);
-    g_string_set_size(self->word_buffer, 0);
+    InkeySink sink = ibus_inkey_real_sink(engine);
+    ibus_inkey_flush_word_buffer(self->word_buffer, &sink);
     IBUS_ENGINE_CLASS(ibus_inkey_engine_parent_class)->reset(engine);
 }
 

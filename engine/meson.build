@@ -44,3 +44,11 @@ test_word_boundary_exe = executable('test-word-boundary',
   install : false,
 )
 test('word boundary', test_word_boundary_exe)
+
+test_commit_e2e_exe = executable('test-commit-e2e',
+  'tests/test_commit_e2e.c',
+  'src/engine.c',
+  dependencies : [ibus_dep, glib_dep, gobject_dep, core_dep],
+  install : false,
+)
+test('commit end-to-end', test_commit_e2e_exe)
