@@ -7,6 +7,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic;
 
+mod detect;
 mod frequency;
 mod layout_tables;
 
