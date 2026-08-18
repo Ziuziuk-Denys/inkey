@@ -36,3 +36,11 @@ test_modifier_passthrough_exe = executable('test-modifier-passthrough',
   install : false,
 )
 test('modifier passthrough', test_modifier_passthrough_exe)
+
+test_word_boundary_exe = executable('test-word-boundary',
+  'tests/test_word_boundary.c',
+  'src/engine.c',
+  dependencies : [ibus_dep, glib_dep, gobject_dep, core_dep],
+  install : false,
+)
+test('word boundary', test_word_boundary_exe)
