@@ -1,0 +1,12 @@
+# Rust
+/core/target/
+
+# Meson
+/engine/build/
+/engine/subprojects/*
+!/engine/subprojects/*.wrap
+
+# Editors
+.vscode/
+.idea/
+*.swp
